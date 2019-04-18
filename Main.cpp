@@ -75,20 +75,21 @@ class Application
 	}
 	void Handle_WM_MOUSEMOVE(WPARAM wParam, LPARAM lParam)
 	{
-		if (flag)
-		{
 			D2D1_POINT_2F pt2;
 			pt2.x = LOWORD(lParam);
 			pt2.y = HIWORD(lParam);
 
+		if (flag)
+		{
 			m_selectedRegion.left = min(pt1.x, pt2.x);
 			m_selectedRegion.right = max(pt1.x, pt2.x);
 			m_selectedRegion.top = min(pt1.y, pt2.y);
 			m_selectedRegion.bottom = max(pt1.y, pt2.y);
 
 			UpdateFr(m_selectedRegion);
-			m_device->Commit();
 		}
+		UpdateFocus(pt2.x, pt2.y);
+		m_device->Commit();
 	}
 	void Handle_WM_CLIPBOARDUPDATE(WPARAM wParam, LPARAM lParam)
 	{
@@ -111,8 +112,10 @@ class Application
 
 	ComPtr<IDCompositionDesktopDevice>						m_device;
 	ComPtr<IDCompositionTarget>								m_bgTarget, m_frTarget;
-	ComPtr<IDCompositionVisual2>							m_bgVisual, m_frVisual;
-	ComPtr<IDCompositionVirtualSurface>						m_bgContent, m_frContent;
+	ComPtr<IDCompositionVisual2>							m_bgVisual, m_frVisual, m_focusVisual;
+	ComPtr<IDCompositionVirtualSurface>						m_bgContent, m_frContent,m_focusContent;
+
+	D2D1_SIZE_U	m_focusSize;
 
 	ComPtr<ID2D1DeviceContext>								m_dc;
 	ComPtr<ID2D1Bitmap1>									m_bmp;
@@ -142,12 +145,15 @@ class Application
 
 		m_device->CreateVisual(&m_bgVisual);
 		m_device->CreateVisual(&m_frVisual);
+		m_device->CreateVisual(&m_focusVisual);
 
 		m_device->CreateVirtualSurface(m_width, m_height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_bgContent);
 		m_device->CreateVirtualSurface(m_width, m_height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_frContent);
+		m_device->CreateVirtualSurface(m_focusSize.width, m_focusSize.height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &m_focusContent);
 
 		m_bgTarget->SetRoot(m_bgVisual.Get()); m_bgVisual->SetContent(m_bgContent.Get());
 		m_frTarget->SetRoot(m_frVisual.Get()); m_frVisual->SetContent(m_frContent.Get());
+		m_frVisual->AddVisual(m_focusVisual.Get(), true, nullptr); m_focusVisual->SetContent(m_focusContent.Get());
 
 		Helper::LoadPictureFromResource(MAKEINTRESOURCE(IDR_IMAGE_PNG), L"IMAGE", m_factory.Get(), m_dc.Get(), &m_bmp, &m_wicBmp);
 		AdjustWindowPos();
@@ -185,6 +191,28 @@ class Application
 		m_frContent->EndDraw();
 	}
 
+	void UpdateFocus(float x,float y)
+	{
+		POINT offset;
+		ComPtr<ID2D1DeviceContext> dc;
+		m_focusContent->BeginDraw(nullptr, IID_PPV_ARGS(&dc), &offset);
+		if (dc)
+		{
+			dc->SetTransform(D2D1::Matrix3x2F::Translation(offset.x, offset.y));
+			dc->Clear(0);
+
+			float delt = 16.f;
+			auto w = m_focusSize.width / delt; auto h = m_focusSize.height / delt;
+
+			D2D1_RECT_F src = {x-w/2,y-h/2,x + w / 2,y + h / 2 };
+
+			D2D1_RECT_F drc = { 0,0,(float)m_focusSize.width ,(float)m_focusSize.height };
+
+			dc->DrawBitmap(m_bmp.Get(), drc, 1.f, D2D1_INTERPOLATION_MODE_LINEAR, src);
+		}
+		m_focusContent->EndDraw();
+	}
+
 	void AdjustWindowPos()
 	{
 		auto size = m_bmp->GetPixelSize();
@@ -200,6 +228,9 @@ class Application
 
 		m_bgContent->Resize(m_width, m_height);
 		m_frContent->Resize(m_width, m_height);
+
+		m_focusVisual->SetOffsetY((float)m_height - m_focusSize.height);
+
 		m_device->Commit();
 	}
 
@@ -207,7 +238,8 @@ public:
 	Application(UINT width, UINT height, HINSTANCE hInstance) :
 		m_width(width),
 		m_height(height),
-		m_hInstance(hInstance)
+		m_hInstance(hInstance),
+		m_focusSize{200u,200u}
 	{}
 
 	int Run(int nCmdShow)
